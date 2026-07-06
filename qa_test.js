@@ -58,11 +58,31 @@ async function runQA() {
       throw new Error(`환자 회원가입 실패: ${JSON.stringify(registerData)}`);
     }
 
+    // 의사 등록 권한을 얻기 위해 최고관리자로 로그인
+    console.log('   - 의사 등록을 위해 최고관리자 계정 로그인...');
+    const adminLoginRes = await fetch(`${baseUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'admin@example.com',
+        password: 'admin1234'
+      })
+    });
+    const adminLoginData = await adminLoginRes.json();
+    if (!adminLoginRes.ok || !adminLoginData.token) {
+      throw new Error(`관리자 로그인 실패: ${JSON.stringify(adminLoginData)}`);
+    }
+    const adminToken = adminLoginData.token;
+    console.log('✅ 관리자 로그인 성공 (JWT 토큰 획득)');
+
     // 의사 회원가입
     const testDoctorEmail = `qa_test_doctor_${Date.now()}@example.com`;
     const registerDocRes = await fetch(`${baseUrl}/auth/register`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${adminToken}` // 관리자 인가 전달
+      },
       body: JSON.stringify({
         email: testDoctorEmail,
         password: 'password123',
@@ -310,6 +330,7 @@ async function runQA() {
       if (completeRes.ok && completeData.status === 'completed') {
         console.log(`✅ 의사 진료 완료 및 처방전 팩스 발급 성공 (청구 금액: ${completeData.billAmount}원)`);
       } else {
+        console.error('진료 완료 실패 상세:', completeRes.status, completeData);
         throw new Error('진료 완료 시뮬레이션 실패');
       }
 
