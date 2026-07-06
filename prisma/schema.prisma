@@ -17,11 +17,22 @@ model User {
   height       Float?
   weight       Float?
   profileImage String?
+  role         String   @default("patient") // 'patient' | 'doctor' | 'admin'
+  
+  // 의사 프로필용 전용 필드들 추가
+  department   String?  // e.g., '내과', '소아청소년과'
+  hospitalName String?  // e.g., '행복한내과의원'
+  doctorLicense String? // e.g., 'LIC-998811'
+  
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  gpsSettings    GpsSetting[]
-  symptomReports SymptomReport[]
+  gpsSettings          GpsSetting[]
+  symptomReports       SymptomReport[]
+  medicationAlarms     MedicationAlarm[]
+  telemedicineSessions TelemedicineSession[]
+  insuranceDocuments   InsuranceDocument[]
+  notifications        Notification[]
 }
 
 model GpsSetting {
@@ -42,6 +53,9 @@ model GpsSetting {
   guardianId        Int
   guardian          User     @relation(fields: [guardianId], references: [id], onDelete: Cascade)
 
+  gpsLogs           GpsLog[]
+  sosAlerts         SosAlert[]
+
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 }
@@ -54,4 +68,127 @@ model SymptomReport {
   userId      Int
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt   DateTime @default(now())
+}
+
+model MedicationAlarm {
+  id           Int      @id @default(autoincrement())
+  medicineName String
+  dosage       String?
+  times        String[] // e.g. ["08:00", "13:00", "19:00"]
+  days         String[] // e.g. ["월", "화", "수"]
+  active       Boolean  @default(true)
+  userId       Int
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model TelemedicineSession {
+  id                 Int      @id @default(autoincrement())
+  doctorName         String
+  department         String   // '내과', '소아과' 등
+  hospitalName       String
+  status             String   // 'waiting' | 'ongoing' | 'completed' | 'cancelled'
+  symptomDetails     String?
+  waitQueueNumber    Int?
+  prescriptionUrl    String?
+  prescriptionSentTo String?  // e.g. "fax: 02-123-4567" or "email: pharmacy@mail.com"
+  billAmount         Float?
+  paid               Boolean  @default(false)
+  userId             Int
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model InsuranceDocument {
+  id             Int      @id @default(autoincrement())
+  documentType   String   // '진료확인서' | '처방전' | '의료영수증' | '소견서'
+  hospitalName   String
+  issueDate      DateTime
+  status         String   // 'issued' | 'submitted'
+  submittedTo    String?  // e.g. '삼성화재', 'KB손해보험'
+  fileUrl        String?
+  userId         Int
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model GpsLog {
+  id                  Int      @id @default(autoincrement())
+  latitude            Float
+  longitude           Float
+  batteryLevel        Int?
+  speed               Float?
+  isSafetyZoneBreached Boolean  @default(false)
+  gpsSettingId        Int
+  gpsSetting          GpsSetting @relation(fields: [gpsSettingId], references: [id], onDelete: Cascade)
+  createdAt           DateTime @default(now())
+}
+
+model SosAlert {
+  id                  Int      @id @default(autoincrement())
+  status              String   // 'triggered' | 'called' | 'messaged' | 'siren_played' | 'resolved'
+  latitude            Float?
+  longitude           Float?
+  verificationSmsSent Boolean  @default(false)
+  verificationCallMade Boolean  @default(false)
+  resolvedAt          DateTime?
+  gpsSettingId        Int
+  gpsSetting          GpsSetting @relation(fields: [gpsSettingId], references: [id], onDelete: Cascade)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+model Notification {
+  id        Int      @id @default(autoincrement())
+  category  String   // 'schedule' | 'medication' | 'gps' | 'sos' | 'clinic' | 'service'
+  title     String
+  body      String
+  isRead    Boolean  @default(false)
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+}
+
+model SymptomMetadata {
+  id           Int      @id @default(autoincrement())
+  part         String   // e.g. 'head', 'neck', 'chest', 'abdomen'
+  partLabel    String   // e.g. '머리', '목', '가슴', '복부'
+  isInternal   Boolean  // true: 내부, false: 외부
+  subcategory  String   // e.g. 'muscle', 'stabbing', 'burning' 등
+  symptoms     String[] // 증상들의 배열
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Product {
+  id          Int      @id @default(autoincrement())
+  name        String
+  category    String   // '영양제' | '측정기' | '보조기' 등
+  price       Int
+  stock       Int
+  sales       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model AppConfig {
+  key         String   @id
+  value       String
+  description String?
+  updatedAt   DateTime @updatedAt
+}
+
+model Hospital {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  address     String?
+  phone       String?
+  departments String[] // e.g. ["내과", "소아청소년과", "이비인후과"]
+  rating      Float    @default(5.0)
+  status      String   @default("active") // 'active' | 'inactive'
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
