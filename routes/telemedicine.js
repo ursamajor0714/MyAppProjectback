@@ -37,6 +37,25 @@ router.get('/doctors', authenticateToken, async (req, res) => {
   }
 });
 
+// 임시: 모든 활성 진료 취소 엔드포인트 (테스트용)
+router.post('/sessions/clear-all', async (req, res) => {
+  try {
+    const result = await prisma.telemedicineSession.updateMany({
+      where: {
+        status: { in: ['waiting', 'ongoing'] }
+      },
+      data: {
+        status: 'cancelled',
+        waitQueueNumber: null
+      }
+    });
+    res.json({ message: `Successfully updated ${result.count} sessions to cancelled.` });
+  } catch (error) {
+    console.error('Clear all sessions error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // 2. 비대면 진료 세션 생성 (진료 신청 및 대기열 등록)
 router.post('/sessions', authenticateToken, async (req, res) => {
   const { doctorName, department, hospitalName, symptomDetails } = req.body;
