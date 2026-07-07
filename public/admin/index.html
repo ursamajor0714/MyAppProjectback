@@ -10,6 +10,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <!-- Chart.js CDN -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Socket.io & WebRTC Support -->
+  <script src="/socket.io/socket.io.js"></script>
   
   <style>
     /* --- CSS 디자인 시스템 & 테마 (Glassmorphism & Neon Dark) --- */
@@ -2292,6 +2294,150 @@
       }
     }
 
+    // ── 어드민 WebRTC 및 실시간 소켓 전역 레퍼런스 ──
+    let adminSocket = null;
+    let adminPeerConnection = null;
+    let adminLocalStream = null;
+    let adminActiveSessionId = null;
+
+    async function acceptAndStartCall(sessionId) {
+      const callStatusOverlay = document.getElementById('call-status-overlay');
+      const btnStartCall = document.getElementById('btn-start-call');
+      const btnEndCall = document.getElementById('btn-end-call');
+
+      if (callStatusOverlay) callStatusOverlay.innerText = '미디어 장치(카메라/마이크) 연결 중...';
+      
+      try {
+        // 1. 진료 세션 상태를 'ongoing'으로 변경
+        await apiFetch(`/api/telemedicine/sessions/${sessionId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'ongoing' })
+        });
+
+        adminActiveSessionId = sessionId;
+
+        // 2. 로컬 웹캠 스트림 획득
+        adminLocalStream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: { width: 320, height: 240 }
+        });
+        
+        const localVideo = document.getElementById('admin-local-video');
+        if (localVideo) localVideo.srcObject = adminLocalStream;
+
+        // 3. 소켓 서버 연결 및 룸 조인
+        adminSocket = io({
+          auth: { token },
+          transports: ['websocket']
+        });
+
+        adminSocket.on('connect', () => {
+          console.log('의사 소켓 서버 연결 성공 ➡️ 룸 조인');
+          adminSocket.emit('join-clinic', { sessionId });
+        });
+
+        // WebRTC 피어 커넥션 생성 헬퍼
+        function setupAdminPeerConnection() {
+          const pc = new RTCPeerConnection({
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' }
+            ]
+          });
+
+          // 로컬 트랙 추가
+          adminLocalStream.getTracks().forEach(track => {
+            pc.addTrack(track, adminLocalStream);
+          });
+
+          // ICE Candidate 중계
+          pc.onicecandidate = (event) => {
+            if (event.candidate && adminSocket) {
+              adminSocket.emit('ice-candidate', {
+                candidate: event.candidate,
+                sessionId
+              });
+            }
+          };
+
+          // 환자 스트림 수신
+          pc.ontrack = (event) => {
+            const remoteVideo = document.getElementById('admin-remote-video');
+            if (remoteVideo) remoteVideo.srcObject = event.streams[0];
+          };
+
+          adminPeerConnection = pc;
+          return pc;
+        }
+
+        // 환자 측에서 보낸 Offer 수신 처리
+        adminSocket.on('webrtc-offer', async ({ offer }) => {
+          console.log('환자로부터 Offer 수신');
+          const pc = adminPeerConnection || setupAdminPeerConnection();
+          try {
+            await pc.setRemoteDescription(new RTCSessionDescription(offer));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            
+            adminSocket.emit('webrtc-answer', { answer, sessionId });
+            if (callStatusOverlay) callStatusOverlay.innerText = '🟢 화상 진료 통화 연결 완료';
+            if (btnStartCall) btnStartCall.style.display = 'none';
+            if (btnEndCall) btnEndCall.style.display = 'block';
+          } catch (e) {
+            console.error('Offer 수신 처리 실패:', e);
+            if (callStatusOverlay) callStatusOverlay.innerText = '🔴 통화 수립 에러';
+          }
+        });
+
+        // ICE Candidate 수신
+        adminSocket.on('ice-candidate', async ({ candidate }) => {
+          if (adminPeerConnection) {
+            try {
+              await adminPeerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+            } catch (e) {
+              console.warn('Candidate 추가 실패:', e);
+            }
+          }
+        });
+
+        adminSocket.on('clinic-closed', () => {
+          cleanupAdminCall();
+          alert('환자가 진료실을 퇴장하였습니다.');
+          loadTelemedicineList();
+          closeModal('telemedicine-detail-modal');
+        });
+
+      } catch (err) {
+        console.error('의사 통화 시작 실패:', err);
+        alert('카메라/마이크 권한을 활성화하거나 연결 상태를 확인해주세요.');
+        if (callStatusOverlay) callStatusOverlay.innerText = '🔴 연결 실패';
+      }
+    }
+
+    function cleanupAdminCall() {
+      if (adminLocalStream) {
+        adminLocalStream.getTracks().forEach(track => track.stop());
+        adminLocalStream = null;
+      }
+      const localVideo = document.getElementById('admin-local-video');
+      const remoteVideo = document.getElementById('admin-remote-video');
+      if (localVideo) localVideo.srcObject = null;
+      if (remoteVideo) remoteVideo.srcObject = null;
+
+      if (adminPeerConnection) {
+        adminPeerConnection.close();
+        adminPeerConnection = null;
+      }
+
+      if (adminSocket) {
+        adminSocket.emit('leave-clinic', { sessionId: adminActiveSessionId });
+        adminSocket.disconnect();
+        adminSocket = null;
+      }
+
+      adminActiveSessionId = null;
+    }
+
     function openTelemedicineDetailsByIndex(idx) {
       const s = sessionsCache[idx];
       const u = s.user;
@@ -2324,6 +2470,23 @@
         `;
       });
 
+      // 화상 진료 패널 HTML 조립
+      let videoPanelHtml = '';
+      if (s.status === 'waiting' || s.status === 'ongoing') {
+        videoPanelHtml = `
+          <h4 style="font-size:15px; margin-bottom:12px; color:var(--primary-hover); border-top:1px solid rgba(255,255,255,0.05); padding-top:15px;">🎥 실시간 비대면 화상 진료실</h4>
+          <div style="background:#070913; border-radius:16px; overflow:hidden; position:relative; height:240px; display:flex; flex-direction:column; margin-bottom:15px; border:1px solid var(--glass-border);">
+            <video id="admin-remote-video" autoplay playsinline style="width:100%; height:100%; object-fit:cover; background:#070913;"></video>
+            <video id="admin-local-video" autoplay playsinline muted style="position:absolute; top:12px; right:12px; width:70px; height:90px; border-radius:8px; border:2px solid #fff; object-fit:cover; background:#070913; z-index:10;"></video>
+            <div id="call-status-overlay" style="position:absolute; bottom:12px; left:12px; font-size:11px; background:rgba(0,0,0,0.6); padding:4px 10px; border-radius:12px; font-weight:600;">진료 연결 준비 대기중...</div>
+          </div>
+          <div id="call-controls-row" style="display:flex; gap:10px; margin-bottom:20px;">
+            <button class="btn-action" id="btn-start-call" style="margin:0; flex:1;" onclick="acceptAndStartCall(${s.id})">진료 수락 및 화상 전화 걸기</button>
+            <button class="btn-action" id="btn-end-call" style="margin:0; flex:1; background:var(--danger); display:none;" onclick="openCompleteSessionModal(${s.id})">진료 완료 / 수납</button>
+          </div>
+        `;
+      }
+
       modalBody.innerHTML = `
         <div style="border-right:1px solid var(--glass-border); padding-right:20px;">
           <h4 style="font-size:15px; margin-bottom:12px; color:var(--primary-hover);">🏥 환자 정보 (Patient Info)</h4>
@@ -2345,13 +2508,19 @@
         </div>
         <div>
           <h4 style="font-size:15px; margin-bottom:12px; color:var(--primary-hover);">📋 최근 자가진단 이력</h4>
-          <div style="max-height: 380px; overflow-y:auto;">
+          <div style="max-height: 220px; overflow-y:auto; margin-bottom:15px;">
             ${diagnosisHistoryHtml}
           </div>
+          ${videoPanelHtml}
         </div>
       `;
 
       document.getElementById('telemedicine-detail-modal').style.display = 'flex';
+      
+      // 이미 진행 중인 진료(ongoing)라면 자동으로 통화 셋업 시도
+      if (s.status === 'ongoing') {
+        acceptAndStartCall(s.id);
+      }
     }
 
     function openCompleteSessionModal(sessionId) {
@@ -2379,7 +2548,9 @@
           method: 'POST'
         });
 
+        cleanupAdminCall();
         closeModal('telemedicine-modal');
+        closeModal('telemedicine-detail-modal');
         alert('비대면 진료 및 수납 처리가 완료되었습니다.');
         loadTelemedicineList();
       } catch (err) {
@@ -2389,6 +2560,9 @@
 
     function closeModal(modalId) {
       document.getElementById(modalId).style.display = 'none';
+      if (modalId === 'telemedicine-detail-modal') {
+        cleanupAdminCall();
+      }
     }
 
     // --- 5. 안심 GPS 관제 뷰 처리 ---
