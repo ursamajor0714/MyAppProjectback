@@ -2344,8 +2344,13 @@
             // 마이크가 없거나 웹캠이 없는 경우를 위한 최소 폴백 시도
             adminLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
           } catch (audioFallbackError) {
-            // 마이크마저 없는 경우 웹캠만이라도 시도
-            adminLocalStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
+            try {
+              // 마이크마저 없는 경우 웹캠만이라도 시도
+              adminLocalStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
+            } catch (videoFallbackError) {
+              console.warn('⚠️ PC에 카메라 및 마이크 장치가 전혀 감지되지 않았습니다. 장치 없이 수신 전용(Receive-only) 모드로 통화를 진행합니다.');
+              adminLocalStream = null;
+            }
           }
         }
         
@@ -2371,10 +2376,12 @@
             ]
           });
 
-          // 로컬 트랙 추가
-          adminLocalStream.getTracks().forEach(track => {
-            pc.addTrack(track, adminLocalStream);
-          });
+          // 로컬 트랙 추가 (로컬 장치가 감지된 경우에만 추가)
+          if (adminLocalStream) {
+            adminLocalStream.getTracks().forEach(track => {
+              pc.addTrack(track, adminLocalStream);
+            });
+          }
 
           // ICE Candidate 중계
           pc.onicecandidate = (event) => {
