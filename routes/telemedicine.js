@@ -19,6 +19,40 @@ const MOCK_DOCTORS = [
   { id: 6, name: '강현우 의사', department: '정형외과', hospitalName: '튼튼정형외과', status: '학회참석', waitTime: '대기불가', rating: 4.5 },
 ];
 
+// 0. 진료 내역 조회 (완료된 세션 목록 - 마이페이지 보험 청구 화면용)
+router.get('/sessions/history', authenticateToken, async (req, res) => {
+  try {
+    const sessions = await prisma.telemedicineSession.findMany({
+      where: {
+        userId: req.user.id,
+        status: { in: ['completed', 'cancelled'] },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    });
+
+    // 마이페이지 보험청구 UI 포맷으로 가공
+    const formatted = sessions.map((s) => ({
+      id: `T-${String(s.id).padStart(8, '0')}`,
+      sessionId: s.id,
+      hospital: s.hospitalName,
+      doctor: s.doctorName,
+      department: s.department,
+      date: s.createdAt.toISOString().split('T')[0],
+      diagnosis: s.symptomDetails || '진료 내역',
+      cost: s.billAmount ? `${s.billAmount.toLocaleString('ko-KR')}원` : '미청구',
+      paid: s.paid,
+      status: s.status,
+      prescriptionUrl: s.prescriptionUrl || null,
+    }));
+
+    res.json(formatted);
+  } catch (error) {
+    console.error('Get telemedicine history error:', error);
+    res.status(500).json({ error: '진료 내역을 가져오는 중 오류 발생.' });
+  }
+});
+
 // 1. 진료과 및 의사 목록 조회
 router.get('/doctors', authenticateToken, async (req, res) => {
   const { department } = req.query;
@@ -228,6 +262,29 @@ router.post('/sessions/:id/pay', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: '이미 수납이 완료된 진료입니다.' });
     }
 
+    // 환자가 등록한 간편결제 카드 가져오기
+    const userCard = await prisma.creditCard.findFirst({
+      where: { userId: req.user.id },
+      orderBy: { createdAt: 'asc' }
+    });
+
+    const billAmt = session.billAmount || 8400;
+    const cardInfo = userCard 
+      ? `${userCard.company} (${userCard.number})` 
+      : '등록된 간편결제 카드';
+
+    // 💳 [PortOne PG사 후청구 수납 승인 로그]
+    console.log(`
+    [PortOne 후청구 수납 완료]
+    ──────────────────────────────────────────────
+    - 환자 ID: ${req.user.id} (${req.user.name})
+    - 자동 결제수단: ${cardInfo}
+    - 후청구 금액: ${billAmt.toLocaleString()}원
+    - 병원명: ${session.hospitalName} (${session.department})
+    - 상태: 진료 세션 자동 수납 완료.
+    ──────────────────────────────────────────────
+    `);
+
     const updated = await prisma.telemedicineSession.update({
       where: { id: Number(id) },
       data: { paid: true }
@@ -249,8 +306,8 @@ router.post('/sessions/:id/pay', authenticateToken, async (req, res) => {
     await prisma.notification.create({
       data: {
         category: 'service',
-        title: '진료비 결제 완료',
-        body: `${session.hospitalName} 진료비 ${session.billAmount}원이 정상 결제되었습니다. 영수증이 마이페이지에 보관되었습니다.`,
+        title: '💳 진료비 후청구 결제 완료',
+        body: `${session.hospitalName} 진료비 ${billAmt.toLocaleString()}원이 등록된 카드 [${cardInfo}]로 정상 자동 결제되었습니다. 영수증이 마이페이지에 보관되었습니다.`,
         userId: req.user.id
       }
     });
