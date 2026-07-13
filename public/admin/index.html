@@ -1244,6 +1244,10 @@
             <option value="영양제">영양제</option>
             <option value="측정기">측정기</option>
             <option value="보조기">보조기</option>
+            <option value="의약외품">의약외품</option>
+            <option value="유산균">유산균</option>
+            <option value="비타민">비타민</option>
+            <option value="의료기기">의료기기</option>
           </select>
         </div>
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
@@ -2491,14 +2495,39 @@
       let diagnosisHistoryHtml = '';
       reports.forEach(r => {
         const dateStr = new Date(r.createdAt).toLocaleDateString();
+        
+        let parsedContent = {};
+        try {
+          parsedContent = typeof r.content === 'string' ? JSON.parse(r.content) : r.content;
+        } catch (parseErr) {
+          parsedContent = r.content || {};
+        }
+
+        let displayDetail = '';
+        if (parsedContent.partLabel) {
+          const symptomsList = Array.isArray(parsedContent.symptoms) ? parsedContent.symptoms.join(', ') : '-';
+          displayDetail = `
+            <strong>부위:</strong> ${parsedContent.partLabel} | 
+            <strong>증상:</strong> ${symptomsList} | 
+            <strong>추정 원인:</strong> <span style="color:#38BDF8; font-weight:700;">${parsedContent.inferredCause || '-'}</span><br>
+            <span style="display:inline-block; margin-top:4px; font-size:11px; color:#FCA5A5;">🔍 ${parsedContent.inferredCauseDesc || ''}</span><br>
+            <span style="display:inline-block; margin-top:2px; font-size:11px; color:#34D399;">💡 ${parsedContent.selfCareAdvice || ''}</span>
+          `;
+        } else if (parsedContent.selectedSymptoms) {
+          const symptomsList = Array.isArray(parsedContent.selectedSymptoms) ? parsedContent.selectedSymptoms.join(', ') : '-';
+          displayDetail = `<strong>선택 증상:</strong> ${symptomsList}`;
+        } else {
+          displayDetail = `<strong>선택 내역:</strong> ${JSON.stringify(parsedContent)}`;
+        }
+
         diagnosisHistoryHtml += `
-          <div style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.04); padding:10px; border-radius:8px; margin-bottom:8px;">
+          <div style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.04); padding:12px; border-radius:8px; margin-bottom:8px; line-height:20px;">
             <div style="display:flex; justify-content:space-between; font-size:12px; font-weight:600; margin-bottom:4px;">
               <span>${r.title}</span>
               <span class="status-badge status-${r.riskLevel === 'very_high' ? 'cancelled' : r.riskLevel === 'high' ? 'waiting' : 'completed'}">${r.riskLevel}</span>
             </div>
             <div style="font-size:11px; color:var(--text-sub);">날짜: ${dateStr}</div>
-            <div style="font-size:11px; color:var(--text-sub); margin-top:2px;">선택: ${JSON.stringify(r.content.selectedSymptoms || r.content)}</div>
+            <div style="font-size:11px; color:var(--text-sub); margin-top:4px; border-top: 1px dashed rgba(255,255,255,0.05); padding-top:4px;">${displayDetail}</div>
           </div>
         `;
       });
@@ -2996,6 +3025,15 @@
     }
 
     // --- 9. 시스템 설정 뷰 처리 ---
+    const CONFIG_KEY_TRANSLATOR = {
+      'free_tier_ad_enabled': '무료 버전 광고 노출 활성화 여부 (true/false)',
+      'telemedicine_fee_krw': '비대면 진료 기본 수납 수수료 (원)',
+      'gps_alert_radius_meters': '안심 GPS 안전 구역 이탈 반경 (m)',
+      'sos_siren_duration_seconds': 'SOS 사이렌 작동 지속 시간 (초)',
+      'webrtc_signaling_timeout_ms': '영상 통화 연결 대기 타임아웃 (ms)',
+      'insurance_claim_fax_number': '보험 서류 기본 수신 팩스 번호'
+    };
+
     async function loadConfigsList() {
       try {
         configsCache = await apiFetch('/api/admin/configs');
@@ -3003,15 +3041,19 @@
         tbody.innerHTML = '';
 
         configsCache.forEach((c, idx) => {
+          const koreanKeyName = CONFIG_KEY_TRANSLATOR[c.key] || c.key;
           tbody.innerHTML += `
-            <tr>
-              <td style="font-weight:600; color:var(--primary-hover);">${c.key}</td>
-              <td style="color:var(--text-sub); font-size:13px;">${c.description || '-'}</td>
-              <td>
-                <input type="text" id="config-input-${idx}" class="form-control" style="padding:6px 12px; width:220px; font-size:13px;" value="${c.value}">
+            <tr style="border-bottom:1px solid rgba(255,255,255,0.03);">
+              <td style="font-weight:700; color:#E2E8F0; padding:12px 8px;">
+                ${koreanKeyName}<br>
+                <span style="font-size:10px; color:#64748B; font-weight:400;">(Key: ${c.key})</span>
               </td>
-              <td>
-                <button class="role-badge-select" style="background:var(--success); color:white;" onclick="updateConfigByIndex(${idx})">설정 변경</button>
+              <td style="color:#94A3B8; font-size:13px; padding:12px 8px;">${c.description || '-'}</td>
+              <td style="padding:12px 8px;">
+                <input type="text" id="config-input-${idx}" class="form-control" style="padding:8px 12px; width:220px; font-size:13px; background:#0F172A; border-color:#334155; color:#F8FAFC; border-radius:8px;" value="${c.value}">
+              </td>
+              <td style="padding:12px 8px;">
+                <button class="btn-action-small" style="background:#10B981; color:white; border-radius:8px; padding:6px 12px;" onclick="updateConfigByIndex(${idx})">설정 저장</button>
               </td>
             </tr>
           `;

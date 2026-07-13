@@ -41,6 +41,24 @@ const profileUpdateSchema = z.object({
   profileImage: z.string().optional().nullable()
 });
 
+// 0. 이메일 중복 체크 API
+router.get('/check-email', async (req, res) => {
+  const { email } = req.query;
+  if (!email) {
+    return res.status(StatusCodes.BAD_REQUEST).json({ error: '이메일을 입력해 주세요.' });
+  }
+  try {
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (user) {
+      return res.status(StatusCodes.CONFLICT).json({ error: '이미 사용 중인 이메일입니다.', duplicate: true });
+    }
+    return res.status(StatusCodes.OK).json({ message: '사용 가능한 이메일입니다.', duplicate: false });
+  } catch (e) {
+    console.error('Check email error:', e);
+    return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ error: '이메일 중복 체크 중 오류 발생.' });
+  }
+});
+
 // 1. 회원가입
 router.post('/register', authLimiter, async (req, res) => {
   try {

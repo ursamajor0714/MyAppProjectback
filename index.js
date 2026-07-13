@@ -59,6 +59,20 @@ app.use('/api/notifications', notificationsRouter);
 app.use('/api/documents', documentsRouter);
 app.use('/api/admin', adminRouter);
 
+const { PrismaClient } = require('@prisma/client');
+const prismaClientForProducts = new PrismaClient();
+app.get('/api/products', async (req, res) => {
+  try {
+    const list = await prismaClientForProducts.product.findMany({
+      orderBy: { id: 'asc' }
+    });
+    res.json(list);
+  } catch (err) {
+    console.error('Get public products error:', err);
+    res.status(500).json({ error: '상품 목록 조회 실패' });
+  }
+});
+
 // ── Socket.io 연결 인증 미들웨어 및 WebRTC 시그널링 로직 ──
 io.use((socket, next) => {
   const token = socket.handshake.auth.token;
